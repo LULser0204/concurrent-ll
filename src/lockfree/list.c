@@ -8,6 +8,7 @@
 struct node {
     val_t data;
     struct node *next;
+    struct node *prev;
 };
 
 struct list {
@@ -92,11 +93,12 @@ bool list_contains(list_t *the_list, val_t val)
     return false;
 }
 
-static node_t *new_node(val_t val, node_t *next)
+static node_t *new_node(val_t val, node_t *next, node_t *prev)
 {
     node_t *node = malloc(sizeof(node_t));
     node->data = val;
     node->next = next;
+    node->prev = prev;
     return node;
 }
 
@@ -106,9 +108,10 @@ list_t *list_new()
     list_t *the_list = malloc(sizeof(list_t));
 
     /* now need to create the sentinel node */
-    the_list->head = new_node(INT_MIN, NULL);
-    the_list->tail = new_node(INT_MAX, NULL);
+    the_list->head = new_node(INT_MIN, NULL, NULL);
+    the_list->tail = new_node(INT_MAX, NULL, the_list->head);
     the_list->head->next = the_list->tail;
+    the_list->tail->prev = the_list->head;
     the_list->size = 0;
     return the_list;
 }
@@ -126,16 +129,19 @@ int list_size(list_t *the_list)
 bool list_add(list_t *the_list, val_t val)
 {
     node_t *left = NULL;
-    node_t *new_elem = new_node(val, NULL);
+    node_t *new_elem = new_node(val, NULL, NULL);
     while (1) {
         node_t *right = list_search(the_list, val, &left);
         if (right != the_list->tail && right->data == val)
             return false;
 
         new_elem->next = right;
+        new_elem->prev = left;
         if (CAS_PTR(&(left->next), right, new_elem) == right) {
-            FAI_U32(&(the_list->size));
-            return true;
+            if (CAS_PTR(&(right->prev), left, new_elem) == left) {
+                FAI_U32(&(the_list->size));
+                return true;
+            }
         }
     }
 }
@@ -154,8 +160,10 @@ bool list_remove(list_t *the_list, val_t val)
         if (!is_marked_ref(right_succ)) {
             if (CAS_PTR(&(right->next), right_succ,
                         get_marked_ref(right_succ)) == right_succ) {
-                FAD_U32(&(the_list->size));
-                return true;
+                if (CAS_PTR(&(right_succ->prev), right, left) == right) {        
+                    FAD_U32(&(the_list->size));
+                    return true;
+                }    
             }
         }
     }
